@@ -1,11 +1,17 @@
 import csv
+import matplotlib.pyplot as plt
 from sklearn.neural_network import MLPClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import NearestNeighbors
 
 training_data = []
 testing_data = []
 training_label = []
 testing_label = []
+training_race = []
+testing_race = []
+nn_preds = []
+log_preds = []
 
 
 def load_file(fname):
@@ -14,6 +20,7 @@ def load_file(fname):
 
         arr = []
         labels = []
+        arr_race = []
         # read in values from file
         for row in reader:
             # c_charge_degree
@@ -50,16 +57,17 @@ def load_file(fname):
             if row['sex'] == 'Female':
                 sex = 1
 
-            # arr.append([c_charge_degree, race, age_cat, sex, int(row['priors_count'])])
             arr.append([c_charge_degree, age_cat, sex, int(row['priors_count'])])
             labels.append(row['two_year_recid'])
+            arr_race.append(row['race'])
 
-    return arr, labels
+    return arr, labels, arr_race
 
 
 def build_logistic_model():
     clf = LogisticRegression()
     clf.fit(training_data, training_label)
+
     # print 'Built Logistic Regression'
     # print clf.coef_
     return clf
@@ -74,6 +82,17 @@ def build_mlp_model():
     nn_mlp = clf.fit(training_data, training_label)
     # print "Built MLP"
     return nn_mlp
+
+
+# def test_preds():
+#     nn_clf = build_mlp_model()
+#     log_clf = build_logistic_model()
+#
+#     diff_count = 0
+#     diff_aa = 0
+#     diff_white = 0
+#
+#     print diff_count
 
 
 def test_gen_accuracy(model):
@@ -101,116 +120,123 @@ def test_subgroup_accuracy(model, field, desc):
         print 'Invalid input'
         return
 
-    # c_charge_degree
-    if field == 0:
-        if desc == 'M':
-            subgroup = 0
-        elif desc == 'F':
-            subgroup = 1
-        else:
-            print 'Invalid description: ' + desc
+    # Consistency
+    k = 10
+    neigh = NearestNeighbors(n_neighbors=k)
+    neigh.fit(testing_data)
+    c = 0
+    temp = 0
 
-    # race
-    if field == 1:
-        if desc == 'Caucasian':
-            subgroup = 0
-        elif desc == 'African-American':
-            subgroup = 1
-        elif desc == 'Hispanic':
-            subgroup = 2
-        elif desc == 'Asian':
-            subgroup = 3
-        elif desc == 'Native American':
-            subgroup = 4
-        elif desc == 'Other':
-            subgroup = 5
-        else:
-            print 'Invalid description: ' + desc
+    for i in range(len(testing_data)):
+        if testing_race[i] == desc:
+            knn = neigh.kneighbors([testing_data[i]])  # indexes of knn in testing_data
+            for i in range(0, len(knn[1][0])):
+                pred = clf.predict([testing_data[knn[1][0][i]]])
+                temp += abs(int(testing_label[i]) - int(pred[0]))
+            c += temp/float(k)
+            temp = 0
 
-    # age_cat
-    if field == 2:
-        if desc == 'Less than 25':
-            subgroup = 0
-        elif desc == '25 - 45':
-            subgroup = 1
-        elif desc == 'Greater than 45':
-            subgroup = 2
-        else:
-            print 'Invalid description: ' + desc
-
-    # sex
-    if field == 3:
-        if desc == 'Male':
-            subgroup = 0
-        if desc == 'Female':
-            subgroup = 1
-        else:
-            print 'Invalid description: ' + desc
+    c /= float(len(testing_data))
 
     # accuracy
-    acc_count = 0
     acc_denom = 0
-    fp_denom = 0
-    fn_denom = 0
+    tn = 0
+    tp = 0
     fp = 0
     fn = 0
 
     for i in range(len(testing_data)):
-        if int(testing_label[i]) == 1:  # individual did recidivate
-            fn_denom += 1
-        if int(testing_label[i]) == 0:  # individual did not recidivate
-            fp_denom += 1
-
-        if testing_data[i][field] == subgroup:
+        if testing_race[i] == desc:
             acc_denom += 1
-            if int(clf.predict([testing_data[i]])[0]) == int(testing_label[i]):     # clf returns an array with one elem
-                acc_count += 1
+
+            if int(clf.predict([testing_data[i]])[0]) == 0 and int(testing_label[i]) == 0:     # clf returns an array with one elem
+                tn += 1
+            if int(clf.predict([testing_data[i]])[0]) == 1 and int(testing_label[i]) == 1:     # clf returns an array with one elem
+                tp += 1
             if int(clf.predict([testing_data[i]])[0]) == 0 and int(testing_label[i]) == 1:
                 fn += 1
             if int(clf.predict([testing_data[i]])[0]) == 1 and int(testing_label[i]) == 0:
                 fp += 1
 
-    print model + ' accuracy for ' + desc + ': ' + str(acc_count / float(acc_denom))
-    print model + ' FPR for ' + desc + ': ' + str(fp / float(fp_denom))
-    print model + ' FNR for ' + desc + ': ' + str(fn / float(fn_denom))
+    print model + ' accuracy for ' + desc + ': ' + str((tn + tp) / float(acc_denom))
+    print model + ' sensitivity for ' + desc + ': ' + str(tp / float(tp+fn))    # checked
+    print model + ' specificity for ' + desc + ': ' + str(tn / float(tn+fp))    # checked
+    print model + ' FPR for ' + desc + ': ' + str(fp / float(tn+fp))
+    print model + ' FNR for ' + desc + ': ' + str(fn / float(tp+fn))
+    print model + ' consistency ' + desc + ': ' + str(1-c)
     print '\n'
 
 
-training_data, training_label = load_file('3split_COMPAS_training_data.csv')
-testing_data, testing_label = load_file('3split_COMPAS_testing_data.csv')
+def graph_results():
+    x = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    x_labels = ['Accuracy', '', 'Consistency', '', 'Sensitivity', '', 'Specificity', '', 'FPR', '', 'FNR']
 
-test_gen_accuracy('log_model')
-test_gen_accuracy('nn_mlp')
+    # Plot 1: Logistic Regression
+    # # Accuracy
+    # bar1 = plt.bar(0, .65, width=0.4, color='b', align='center')
+    # bar2 = plt.bar(.4, .69, width=0.4, color='g', align='center')
+    # # Consistency
+    # plt.bar(2, .75, width=0.4, color='b', align='center')
+    # plt.bar(2.4, .78, width=0.4, color='g', align='center')
+    # # Sensitivity
+    # plt.bar(4, .64, width=0.4, color='b', align='center')
+    # plt.bar(4.4, .40, width=0.4, color='g', align='center')
+    # # Specificity
+    # plt.bar(6, .66, width=0.4, color='b', align='center')
+    # plt.bar(6.4, .86, width=0.4, color='g', align='center')
+    # # FPR
+    # plt.bar(8, .34, width=0.4, color='b', align='center')
+    # plt.bar(8.4, .14, width=0.4, color='g', align='center')
+    # # FNR
+    # plt.bar(10, .36, width=0.4, color='b', align='center')
+    # plt.bar(10.4, .6, width=0.4, color='g', align='center')
+    # plt.tick_params(axis='x', bottom='off',  top='off')
+    # plt.xticks(x, x_labels)
+    # plt.ylabel('Value')
+    # plt.xlabel('Fairness Metric')
+    # plt.legend([bar1, bar2], ['African-American', 'Caucasian'])
+    # plt.title('Logistic Regression')
+    # plt.show()
 
-test_subgroup_accuracy('log_model', 1, 'African-American')
-test_subgroup_accuracy('log_model', 1, 'Caucasian')
+    # Plot 2: Neural Network
+    # Accuracy
+    bar1 = plt.bar(0, .65, width=0.4, color='b', align='center')
+    bar2 = plt.bar(.4, .68, width=0.4, color='g', align='center')
+    # Consistency
+    plt.bar(2, .74, width=0.4, color='b', align='center')
+    plt.bar(2.4, .78, width=0.4, color='g', align='center')
+    # Sensitivity
+    plt.bar(4, .62, width=0.4, color='b', align='center')
+    plt.bar(4.4, .39, width=0.4, color='g', align='center')
+    # Specificity
+    plt.bar(6, .68, width=0.4, color='b', align='center')
+    plt.bar(6.4, .86, width=0.4, color='g', align='center')
+    # FPR
+    plt.bar(8, .32, width=0.4, color='b', align='center')
+    plt.bar(8.4, .14, width=0.4, color='g', align='center')
+    # FNR
+    plt.bar(10, .38, width=0.4, color='b', align='center')
+    plt.bar(10.4, .61, width=0.4, color='g', align='center')
+    plt.tick_params(axis='x', bottom='off', top='off')
+    plt.xticks(x, x_labels)
+    plt.ylabel('Value')
+    plt.xlabel('Fairness Metric')
+    plt.legend([bar1, bar2], ['African-American', 'Caucasian'])
+    plt.title('Neural Network')
+    plt.show()
 
-# test_subgroup_accuracy('log_model', 0, 'F')
-# test_subgroup_accuracy('nn_mlp', 0, 'F')
-# test_subgroup_accuracy('log_model', 0, 'M')
-# test_subgroup_accuracy('nn_mlp', 0, 'M')
+training_data, training_label, training_race = load_file('3split_COMPAS_training_data.csv')
+testing_data, testing_label, testing_race = load_file('3split_COMPAS_testing_data.csv')
 
+# test_preds()
+
+# test_gen_accuracy('log_model')
+# test_gen_accuracy('nn_mlp')
+#
 # test_subgroup_accuracy('log_model', 1, 'African-American')
-# test_subgroup_accuracy('nn_mlp', 1, 'African-American')
 # test_subgroup_accuracy('log_model', 1, 'Caucasian')
+#
+# test_subgroup_accuracy('nn_mlp', 1, 'African-American')
 # test_subgroup_accuracy('nn_mlp', 1, 'Caucasian')
-# test_subgroup_accuracy('log_model', 1, 'Asian')
-# test_subgroup_accuracy('nn_mlp', 1, 'Asian')
-# test_subgroup_accuracy('log_model', 1, 'Native American')
-# test_subgroup_accuracy('nn_mlp', 1, 'Native American')
-# test_subgroup_accuracy('log_model', 1, 'Hispanic')
-# test_subgroup_accuracy('nn_mlp', 1, 'Hispanic')
-# test_subgroup_accuracy('log_model', 1, 'Other')
-# test_subgroup_accuracy('nn_mlp', 1, 'Other')
 
-# test_subgroup_accuracy('log_model', 2, 'Less than 25')
-# test_subgroup_accuracy('nn_mlp', 2, 'Less than 25')
-# test_subgroup_accuracy('log_model', 2, '25 - 45')
-# test_subgroup_accuracy('nn_mlp', 2, '25 - 45')
-# test_subgroup_accuracy('log_model', 2, 'Greater than 45')
-# test_subgroup_accuracy('nn_mlp', 2, 'Greater than 45')
-
-# test_subgroup_accuracy('log_model', 3, 'Male')
-# test_subgroup_accuracy('nn_mlp', 3, 'Male')
-# test_subgroup_accuracy('log_model', 3, 'Female')
-# test_subgroup_accuracy('nn_mlp', 3, 'Female')
+graph_results()
